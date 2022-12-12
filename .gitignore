@@ -1,0 +1,10 @@
+# ignore data
+train_data/
+test_data/
+
+# ignore ckpt and log
+log/
+save/
+
+# ignore script
+*.bat

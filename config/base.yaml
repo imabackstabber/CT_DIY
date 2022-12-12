@@ -1,0 +1,4 @@
+model_name: blahblah
+model_param:
+  inter: 512
+  hidden: 100
