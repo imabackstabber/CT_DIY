@@ -80,29 +80,44 @@ class Solver(object):
                 logger.info('Use {} GPUs'.format(torch.cuda.device_count()))
                 self.model = nn.DataParallel(self.model)
             
-        elif self.model_name == 'cncl_unet':
+        elif self.model_name in ['cncl_unet', 'cncl_attn']:
             # alternatively training gan
             self.alter_training = args.alter_gan
             if self.conf.attn_mode == 'base':
-                self.model_name = 'cncl_unet_base'
+                self.model_name = self.model_name + '_base'
             elif self.conf.attn_mode == 'ca':
-                self.model_name = 'cncl_unet_ca'
+                self.model_name = self.model_name + '_ca'
                 if self.conf.noise_mode == 'sk':
-                    self.model_name = 'cncl_unet_ca_sk'
+                    self.model_name = self.model_name + '_ca_sk'
             elif self.conf.attn_mode == 'sca':
-                self.model_name = 'cncl_unet_sca'
+                self.model_name = self.model_name + '_sca'
             else:
                 raise NotImplementedError('CNCL mode: {} Not Implemented.'.format(self.conf.cncl_mode))
 
             # hack: add diffrent norm + act
             self.model_name += '_{}_{}'.format(self.conf.norm_mode, self.conf.act_mode)
 
-            self.generator = CNCL(
-                noise_encoder=self.conf.noise_mode, 
-                content_encoder=self.conf.content_mode, 
-                attn_mode=self.conf.attn_mode,
-                norm_mode=self.conf.norm_mode,
-                act_mode=self.conf.act_mode
+            if self.model_name.startswith('cncl_unet'):
+                self.generator = CNCL_unet(
+                    noise_encoder=self.conf.noise_mode, 
+                    content_encoder=self.conf.content_mode, 
+                    attn_mode=self.conf.attn_mode,
+                    norm_mode=self.conf.norm_mode,
+                    act_mode=self.conf.act_mode
+                    )
+            elif self.model_name.startswith('cncl_attn'):
+                # update layer info
+                self.mdta_num = self.conf.mdta_num
+                self.cross_num = self.conf.cross_num
+                self.model_name += '_{}_{}'.format(self.mdta_num, self.cross_num)
+                self.generator = CNCL_attn(
+                    noise_encoder=self.conf.noise_mode, 
+                    content_encoder=self.conf.content_mode, 
+                    attn_mode=self.conf.attn_mode,
+                    norm_mode=self.conf.norm_mode,
+                    act_mode=self.conf.act_mode,
+                    mdta_layer_num = self.conf.mdta_num,
+                    cross_layer_num = self.conf.cross_num
                 )
             self.gan = PatchLSGAN()
 
@@ -436,7 +451,7 @@ class Solver(object):
     def train(self):
         if self.model_name.startswith('REDCNN'):
             self.train_redcnn()
-        elif self.model_name.startswith('cncl_unet'):
+        elif self.model_name.startswith('cncl'):
             self.train_cncl()
         else:
             logger.exception('Architecture {} Not Implemented.'.format(self.model_name))
@@ -626,7 +641,7 @@ class Solver(object):
             self.load_model(self.model, self.test_iters)
             self.model.eval()
         elif self.model_name.startswith('cncl_unet'):
-            self.generator = CNCL(
+            self.generator = CNCL_unet(
                 noise_encoder=self.conf.noise_mode, 
                 content_encoder=self.conf.content_mode, 
                 attn_mode=self.conf.attn_mode,

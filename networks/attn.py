@@ -126,6 +126,8 @@ class BidirectionalCrossAttention(nn.Module):
 
         return out, context_out
 
+
+# adopted from https://github.com/swz30/Restormer/blob/HEAD/basicsr/models/archs/restormer_arch.py
 class MDTA(nn.Module):
     def __init__(self, dim = 64, num_heads = 4, bias = False):
         super(MDTA, self).__init__()
@@ -159,8 +161,67 @@ class MDTA(nn.Module):
         out = self.project_out(out)
         return out
 
+# To see the layout of CrossAttn, refer to https://medium.com/@geetkal67/attention-networks-a-simple-way-to-understand-cross-attention-3b396266d82e
+class CrossAttention(nn.Module):
+    def __init__(self ,dim = 64, num_heads = 4, bias = False) -> None:
+        super().__init__()
+        self.num_heads = num_heads
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
+
+        self.x_qkv = nn.Conv2d(dim, dim*3, kernel_size=1, bias=bias)
+        self.x_qkv_dwconv = nn.Conv2d(dim*3, dim*3, kernel_size=3, stride=1, padding=1, groups=dim*3, bias=bias)
+        self.x_project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        
+        self.ctx_qkv = nn.Conv2d(dim, dim*3, kernel_size=1, bias=bias)
+        self.ctx_qkv_dwconv = nn.Conv2d(dim*3, dim*3, kernel_size=3, stride=1, padding=1, groups=dim*3, bias=bias)
+        self.ctx_project_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+
+    def forward(self, x, ctx):
+        b,c,h,w = x.shape
+
+        x_qkv = self.x_qkv_dwconv(self.x_qkv(x))
+        x_q, x_k, x_v = x_qkv.chunk(3, dim=1)
+
+        x_q = rearrange(x_q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        x_k = rearrange(x_k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        x_v = rearrange(x_v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+
+        ctx_qkv = self.ctx_qkv_dwconv(self.ctx_qkv(ctx))
+        ctx_q, ctx_k, ctx_v = ctx_qkv.chunk(3, dim=1)
+
+        ctx_q = rearrange(ctx_q, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        ctx_k = rearrange(ctx_k, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+        ctx_v = rearrange(ctx_v, 'b (head c) h w -> b head c (h w)', head=self.num_heads)
+
+        x_q = torch.nn.functional.normalize(x_q, dim=-1)
+        ctx_k = torch.nn.functional.normalize(ctx_k, dim=-1)
+        ctx_attn = (x_q @ ctx_k.transpose(-2,-1)) * self.temperature
+        ctx_attn = ctx_attn.softmax(dim=-1)
+
+        ctx_out = (ctx_attn @ ctx_v)
+        ctx_out = rearrange(ctx_out, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+        ctx_out = self.ctx_project_out(ctx_out)
+
+        ctx_q = torch.nn.functional.normalize(ctx_q, dim=-1)
+        x_k = torch.nn.functional.normalize(x_k, dim=-1)
+        x_attn = (ctx_q @ x_k.transpose(-2,-1)) * self.temperature
+        x_attn = x_attn.softmax(dim=-1)
+
+        x_out = (x_attn @ x_v)
+        x_out = rearrange(x_out, 'b head c (h w) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+        x_out = self.x_project_out(x_out)
+
+        return x_out, ctx_out
 
 if __name__ == '__main__':
     attn = MDTA()
     fake = torch.randn(40,64,64,64)
-    print(attn(fake).shape)
+    out = attn(fake)
+    assert out.shape == (40,64,64,64)
+
+    attn = CrossAttention()
+    fake_x = torch.randn(40,64,64,64)
+    fake_ctx = torch.randn(40,64,64,64)
+    x, ctx = attn(fake_x, fake_ctx)
+    assert x.shape == fake_x.shape
+    assert ctx.shape == fake_ctx.shape

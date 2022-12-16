@@ -117,13 +117,19 @@ if __name__ == "__main__":
     # architecture
     parser.add_argument('--model', type=str, default='REDCNN')
 
-    # CNCL
+    # CNCL_unet
     parser.add_argument('--content_mode', type=str, default='unet')
     parser.add_argument('--noise_mode', type=str, default='unet')
+    parser.add_argument('--fusion_mode', type=str, default='simple')
+    
+    # CNCL_attn
+    parser.add_argument('--mdta_num', type = int, default=1)
+    parser.add_argument('--cross_num', type = int, default=1)
+
+    # CNCL_universal
     parser.add_argument('--attn_mode', type=str, default='base')
     parser.add_argument('--norm_mode', type=str, default='bn')
     parser.add_argument('--act_mode', type=str, default='relu')
-    parser.add_argument('--fusion_mode', type=str, default='simple')
 
     # training
     parser.add_argument('--norm', action='store_true') # whether to subtract mean and divide var, true if set

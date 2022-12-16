@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from networks.backbone import RED_SK_Block, LayerNorm2d
+from networks.attn import MDTA,CrossAttention
 
 class SCAM(nn.Module):
     '''
@@ -66,10 +67,23 @@ class SimpleChannelAttention(nn.Module):
     def forward(self, x):
         return x*self.ca(x)
 
+# adopted from https://github.com/megvii-research/NAFNet/blob/main/basicsr/models/archs/NAFNet_arch.py#L22
 class SimpleGate(nn.Module):
+    def __init__(self, c, FFN_Expand = 2) -> None:
+        super().__init__()
+        self.norm = LayerNorm2d(c)
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
     def forward(self, x):
+        x = self.norm(x)
+        x = self.conv4(x)
         x1, x2 = x.chunk(2, dim=1)
-        return x1 * x2
+        x = x1 * x2
+        x = self.conv5(x)
+        
+        return x
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_heads) -> None:
@@ -122,8 +136,10 @@ class DoubleConv(nn.Module):
             self.act1 = nn.GELU()
             self.act2 = nn.GELU()
         elif act == 'sg':
-            self.act1 = SimpleGate()
-            self.act2 = SimpleGate()
+            # self.act1 = SimpleGate(mid_channels)
+            # self.act2 = SimpleGate(out_channels)
+            self.act1 = None
+            self.act2 = nn.GELU()
         else:
             self.act1 = None
             self.act2 = None
@@ -272,7 +288,7 @@ class UNet(nn.Module):
         if self.se:
             x = self.se(x)
         out = self.outc(x) # [bs * patch_n, 1, *patch_size]
-        return out
+        return out, x # please return the final featmap
 
 class PatchLSGAN(nn.Module):
     def __init__(self, in_channels=3):
@@ -330,15 +346,7 @@ class SimpleFusion(nn.Module):
         
         return out
 
-class CrossAttentionFusion(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-    
-    def forward(self, x):
-        pass
-
-
-class CNCL(nn.Module):
+class CNCL_unet(nn.Module):
     def __init__(self, noise_encoder = 'unet', content_encoder = 'unet',
                 attn_mode = 'base', norm_mode = 'bn', act_mode = 'relu', 
                 pre_fusion = None, fusion = 'simple') -> None:
@@ -356,8 +364,56 @@ class CNCL(nn.Module):
         # self.relu = nn.ReLU() # relu maybe needed # nope!
 
     def forward(self,img):
-        pred_noise = self.noise_encoder(img)
-        pred_content = self.content_encoder(img)
+        pred_noise, _ = self.noise_encoder(img)
+        pred_content, _ = self.content_encoder(img)
+        pred_fusion = self.fusion_layer(pred_noise, img, pred_content)
+
+        return {
+            'pred_noise': pred_noise,
+            'pred_content': pred_content,
+            'pred_fusion': pred_fusion
+        }
+
+class CNCL_attn(nn.Module):
+    def __init__(self, noise_encoder = 'unet', content_encoder = 'unet',
+                attn_mode = 'base', norm_mode = 'bn', act_mode = 'relu',
+                mdta_layer_num = 1, cross_layer_num = 1, 
+                pre_fusion = None, fusion = 'simple') -> None:
+        super().__init__()
+        if noise_encoder == 'unet':
+            self.noise_encoder = UNet(attn_mode = attn_mode, norm=norm_mode, act=act_mode)
+        elif noise_encoder == 'sk':
+            self.noise_encoder = RED_SK_Block()
+        
+        if content_encoder == 'unet':
+            self.content_encoder = UNet(attn_mode = attn_mode, norm=norm_mode, act=act_mode)
+
+        self.noise_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
+        self.content_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
+        self.cross_attn = nn.ModuleList([CrossAttention(dim=64) for _ in range(cross_layer_num)])
+
+        self.noise_pred = OutConv(64, 1)
+        self.content_pred = OutConv(64,1)
+        self.fusion_layer = SimpleFusion(pre_fusion=pre_fusion)
+        
+        # self.relu = nn.ReLU() # relu maybe needed # nope!
+
+    def forward(self,img):
+        _, noise_featmap = self.noise_encoder(img)
+        _, content_featmap = self.content_encoder(img)
+
+        for layer in self.noise_attn:
+            noise_featmap = layer(noise_featmap)
+        
+        for layer in self.content_attn:
+            content_featmap = layer(content_featmap)
+
+        for layer in self.cross_attn:
+            noise_featmap, content_featmap = layer(noise_featmap, content_featmap)
+
+        pred_noise = self.noise_pred(noise_featmap)
+        pred_content = self.content_pred(content_featmap)
+
         pred_fusion = self.fusion_layer(pred_noise, img, pred_content)
 
         return {
