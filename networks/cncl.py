@@ -2,6 +2,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from networks.backbone import RED_SK_Block, LayerNorm2d
 
 class SCAM(nn.Module):
     '''
@@ -65,6 +66,11 @@ class SimpleChannelAttention(nn.Module):
     def forward(self, x):
         return x*self.ca(x)
 
+class SimpleGate(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * x2
+
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_heads) -> None:
         super().__init__()
@@ -103,8 +109,8 @@ class DoubleConv(nn.Module):
             self.norm1 = nn.BatchNorm2d(mid_channels)
             self.norm2 = nn.BatchNorm2d(out_channels)
         elif norm == 'ln':
-            self.norm1 = nn.LayerNorm(mid_channels)
-            self.norm2 = nn.LayerNorm(out_channels)
+            self.norm1 = LayerNorm2d(mid_channels)
+            self.norm2 = LayerNorm2d(out_channels)
         else:
             self.norm1 = None
             self.norm2 = None
@@ -113,8 +119,11 @@ class DoubleConv(nn.Module):
             self.act1 = nn.ReLU(inplace=True)
             self.act2 = nn.ReLU(inplace=True)
         elif act == 'gelu':
-            self.act1 = nn.GELU(inplace=True)
-            self.act2 = nn.GELU(inplace=True)
+            self.act1 = nn.GELU()
+            self.act2 = nn.GELU()
+        elif act == 'sg':
+            self.act1 = SimpleGate()
+            self.act2 = SimpleGate()
         else:
             self.act1 = None
             self.act2 = None
@@ -215,7 +224,7 @@ class OutConv(nn.Module):
 
 class UNet(nn.Module):
     def __init__(self, in_channels = 1, out_channels = 1, bilinear=True, 
-                norm = 'bn' , act = 'relu', mode = 'base'):
+                norm = 'bn' , act = 'relu', attn_mode = 'base'):
         super(UNet, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -231,11 +240,11 @@ class UNet(nn.Module):
         self.up2 = Up(512, 256 // factor, bilinear, norm = norm, act = act)
         self.up3 = Up(256, 128 // factor, bilinear, norm = norm, act = act)
         self.up4 = Up(128, 64, bilinear, norm = norm, act = act)
-        if mode == 'attn':
+        if attn_mode == 'attn':
             pass
-        elif mode == 'sca':
+        elif attn_mode == 'sca':
             self.se = SimpleChannelAttention(64)
-        elif mode == 'ca':
+        elif attn_mode == 'ca':
             self.se = ChannelAttention(64)
         else:
             self.se = None
@@ -305,7 +314,7 @@ class SimpleFusion(nn.Module):
         else:
             self.pre_fusion_layer = None
         if norm == 'ln':
-            self.norm = nn.LayerNorm(1)
+            self.norm = LayerNorm2d(1)
         else:
             self.norm = None
 
@@ -321,15 +330,26 @@ class SimpleFusion(nn.Module):
         
         return out
 
+class CrossAttentionFusion(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+    
+    def forward(self, x):
+        pass
+
+
 class CNCL(nn.Module):
     def __init__(self, noise_encoder = 'unet', content_encoder = 'unet',
-                 content_encoder_mode = 'base', mode = 'base',
-                 pre_fusion = None, fusion = 'simple') -> None:
+                attn_mode = 'base', norm_mode = 'bn', act_mode = 'relu', 
+                pre_fusion = None, fusion = 'simple') -> None:
         super().__init__()
         if noise_encoder == 'unet':
-            self.noise_encoder = UNet(mode = mode)
+            self.noise_encoder = UNet(attn_mode = attn_mode, norm=norm_mode, act=act_mode)
+        elif noise_encoder == 'sk':
+            self.noise_encoder = RED_SK_Block()
+        
         if content_encoder == 'unet':
-            self.content_encoder = UNet(mode = mode)
+            self.content_encoder = UNet(attn_mode = attn_mode, norm=norm_mode, act=act_mode)
         if fusion == 'simple':
             self.fusion_layer = SimpleFusion(pre_fusion = pre_fusion)
 

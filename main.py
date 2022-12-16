@@ -116,8 +116,14 @@ if __name__ == "__main__":
 
     # architecture
     parser.add_argument('--model', type=str, default='REDCNN')
-    parser.add_argument('--content_mode', type=str, default='base')
-    parser.add_argument('--cncl_mode', type=str, default='base')
+
+    # CNCL
+    parser.add_argument('--content_mode', type=str, default='unet')
+    parser.add_argument('--noise_mode', type=str, default='unet')
+    parser.add_argument('--attn_mode', type=str, default='base')
+    parser.add_argument('--norm_mode', type=str, default='bn')
+    parser.add_argument('--act_mode', type=str, default='relu')
+    parser.add_argument('--fusion_mode', type=str, default='simple')
 
     # training
     parser.add_argument('--norm', action='store_true') # whether to subtract mean and divide var, true if set
@@ -129,8 +135,8 @@ if __name__ == "__main__":
 
     parser.add_argument('--num_epochs', type=int, default=100)
     parser.add_argument('--print_iters', type=int, default=20)
-    parser.add_argument('--decay_iters', type=int, default=8655)
-    parser.add_argument('--save_iters', type=int, default=2000)
+    parser.add_argument('--decay_iters', type=int, default=8655) # for REDCNN
+    parser.add_argument('--save_iters', type=int, default=10000)
     parser.add_argument('--val_iters', type=int, default=4000) # 
     parser.add_argument('--test_iters', type=int, default=50000)  # 50000
 

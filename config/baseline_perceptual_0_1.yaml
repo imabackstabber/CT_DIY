@@ -1,0 +1,11 @@
+# set to one to one first
+loss:
+  - 
+    type: base
+    weight: 1
+  - 
+    type: perceptual
+    weight: 0.1
+  -
+    type: texture
+    weight: 0.1

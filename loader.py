@@ -1,6 +1,8 @@
 import os
-from glob import glob
+import torch
 import numpy as np
+from torchvision import transforms
+from glob import glob
 from torch.utils.data import Dataset, DataLoader
 
 
@@ -58,9 +60,9 @@ class ct_dataset(Dataset):
             input_img = (input_img - input_mean) / input_std
             target_img = (target_img - target_mean) / target_std
 
-        if self.transform:
-            input_img = self.transform(input_img)
-            target_img = self.transform(target_img)
+        # if self.mode == 'train' and self.transform:
+        #     input_img = self.preprocess(input_img)
+        #     target_img = self.preprocess(target_img)
 
 
         if self.mode == 'train' and self.patch_training:

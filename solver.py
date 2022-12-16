@@ -18,6 +18,7 @@ from misc import AverageMeter
 from loguru import logger
 from omegaconf import OmegaConf
 from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms
 
 class Solver(object):
     def __init__(self, args, train_data_loader, test_data_loader):
@@ -60,50 +61,54 @@ class Solver(object):
             self.trunc_min = -1
             self.trunc_max = 1
         
-        # create tensorboard logger
-        self.tensorboard_path = str(os.path.join(args.log_dir, args.model))
-        self.writer = SummaryWriter(self.tensorboard_path)
-        self.log_path = str(os.path.join(self.tensorboard_path, str(datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))))
-        # create loguru handler
-        logger.add(self.log_path + '/record.log', 
-                backtrace = True, diagnose= True,  format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}")
+        self.lr = args.lr
+        self.model_name = args.model
+
         # create OmegaDict
         self.conf = OmegaConf.load(args.yaml_path)
         for key,value in vars(args).items():
             OmegaConf.update(self.conf, key, value)
-        OmegaConf.save(self.conf, self.log_path + '/setting.yaml')
-        logger.info(self.conf)
 
-        self.lr = args.lr
-        self.model_name = args.model
+        
         if self.model_name == 'REDCNN':
             self.fig_save_path = os.path.join(self.save_path, self.model_name, 'fig')
             self.model = RED_CNN()
             self.criterion = nn.MSELoss()
             self.optimizer = optim.Adam(self.model.parameters(), self.lr)
+            self.model.to(self.device)
             if (self.multi_gpu) and (torch.cuda.device_count() > 1):
                 logger.info('Use {} GPUs'.format(torch.cuda.device_count()))
-            self.model = nn.DataParallel(self.model)
-            self.model.to(self.device)
+                self.model = nn.DataParallel(self.model)
+            
         elif self.model_name == 'cncl_unet':
             # alternatively training gan
             self.alter_training = args.alter_gan
-            if self.conf.cncl_mode == 'base':
+            if self.conf.attn_mode == 'base':
                 self.model_name = 'cncl_unet_base'
-            elif self.conf.cncl_mode == 'ca':
+            elif self.conf.attn_mode == 'ca':
                 self.model_name = 'cncl_unet_ca'
-            elif self.conf.cncl_mode == 'sca':
+                if self.conf.noise_mode == 'sk':
+                    self.model_name = 'cncl_unet_ca_sk'
+            elif self.conf.attn_mode == 'sca':
                 self.model_name = 'cncl_unet_sca'
             else:
                 raise NotImplementedError('CNCL mode: {} Not Implemented.'.format(self.conf.cncl_mode))
 
-            self.fig_save_path = os.path.join(self.save_path, self.model_name + '_generator', 'fig') # hack here
+            # hack: add diffrent norm + act
+            self.model_name += '_{}_{}'.format(self.conf.norm_mode, self.conf.act_mode)
 
             self.generator = CNCL(
-                content_encoder_mode=self.conf.content_mode, 
-                mode=self.conf.cncl_mode
+                noise_encoder=self.conf.noise_mode, 
+                content_encoder=self.conf.content_mode, 
+                attn_mode=self.conf.attn_mode,
+                norm_mode=self.conf.norm_mode,
+                act_mode=self.conf.act_mode
                 )
             self.gan = PatchLSGAN()
+
+            self.generator.to(self.device)
+            self.gan.to(self.device)
+            
             if self.alter_training:
                 self.discriminator_iters = args.discriminator_iters
                 self.opt_g = optim.Adam(self.generator.parameters(), self.lr)
@@ -120,15 +125,59 @@ class Solver(object):
             self.criterion_content = nn.L1Loss()
             self.criterion_noise = nn.L1Loss()
             self.criterion_gan = nn.MSELoss() # for LSGAN
+            self.base_loss_weight = 1.0 # as default
+            if 'loss' in self.conf:
+                for _loss in self.conf.loss:
+                    loss_type, loss_weight = _loss.type, _loss.weight
+                    if loss_type == 'base':
+                        self.base_loss_weight = loss_weight # override default
+                    elif loss_type == 'texture':
+                        self.texture_loss_weight = loss_weight
+                    elif loss_type == 'perceptual':
+                        self.perceptual_loss_weight = loss_weight
+
+            # hack: add diffrent loss name
+            self.model_name += '{}{}'.format('_texture_{}'.format(self.texture_loss_weight) if hasattr(self, 'texture_loss_weight') else '',\
+                                            '_perceptual_{}'.format(self.perceptual_loss_weight) if hasattr(self, 'perceptual_loss_weight') else '')
+
+            # hack here for cncl
+            self.fig_save_path = os.path.join(self.save_path, self.model_name + '_generator', 'fig')
+            
+            if hasattr(self, 'texture_loss_weight') or hasattr(self, 'perceptual_loss_weight'):
+                self.feat_extractor = feat_extractor()
+
             if (self.multi_gpu) and (torch.cuda.device_count() > 1):
                 logger.info('Use {} GPUs'.format(torch.cuda.device_count()))
-            self.generator = nn.DataParallel(self.generator)
-            self.gan = nn.DataParallel(self.gan)
+                self.generator = nn.DataParallel(self.generator)
+                self.gan = nn.DataParallel(self.gan)
 
         else:
             raise NotImplementedError('Architecture {} Not Implemented.'.format(self.model_name))
 
-        
+
+        # create tensorboard logger
+        self.tensorboard_path = str(os.path.join(args.log_dir, self.model_name)) # make it to different arch
+        self.writer = SummaryWriter(self.tensorboard_path)
+        self.log_path = str(os.path.join(self.tensorboard_path, str(datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))))
+        # create loguru handler
+        logger.add(self.log_path + '/record.log', 
+                backtrace = True, diagnose= True,  format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}")
+
+        OmegaConf.save(self.conf, self.log_path + '/setting.yaml')
+        logger.info(self.conf)
+
+        self.transform = args.transform
+
+        if self.transform:
+            # flip and rotate 90
+            self.preprocess = transforms.Compose([
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.RandomApply([
+                    transforms.RandomRotation(90)
+                ])
+            ])
+            logger.debug('USING TRANFORM: Flip and Rotate')
         
     def save_model(self, model, iter_, name = None):
         model_name = name if name else self.model_name
@@ -150,8 +199,6 @@ class Solver(object):
                                                                 'norm' if self.norm else ''))
         if self.multi_gpu:
             state_d = OrderedDict()
-            # import ipdb
-            # ipdb.set_trace()
             for k, v in torch.load(f).items():
                 n = k[7:]
                 state_d[n] = v
@@ -201,6 +248,7 @@ class Solver(object):
         ax[2].imshow(y, cmap=plt.cm.gray, vmin=self.trunc_min, vmax=self.trunc_max)
         ax[2].set_title('Full-dose', fontsize=30)
 
+
         if not os.path.exists(self.fig_save_path):
             os.makedirs(self.fig_save_path)
         f.savefig(os.path.join(self.fig_save_path, 'result_{}.png'.format(fig_name)))
@@ -210,6 +258,12 @@ class Solver(object):
         total_num = sum(p.numel() for p in net.parameters())
         trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
         return {'Total': total_num, 'Trainable': trainable_num}
+
+    def transform_before_train(self, img, target):
+        if self.transform:
+            return self.preprocess(img), self.preprocess(target)
+        else:
+            return img, target
 
     def train_redcnn(self):
 
@@ -236,6 +290,9 @@ class Solver(object):
                 else:
                     x = x.unsqueeze(1).float().to(self.device)
                     y = y.unsqueeze(1).float().to(self.device)
+
+                # add transform
+                x, y = self.transform_before_train(x ,y)
 
                 pred = self.model(x)
                 loss = self.criterion(pred, y)
@@ -299,6 +356,9 @@ class Solver(object):
                     img = img.unsqueeze(1).float().to(self.device)
                     target = target.unsqueeze(1).float().to(self.device)
 
+                # add transform
+                img, target = self.transform_before_train(img ,target)
+
                 B,_,H,W = img.shape
 
                 noise = img - target # get ground truth noise
@@ -318,6 +378,12 @@ class Solver(object):
                 loss_content_g = self.criterion_content(pred_fusion, target)
                 loss_l1 = loss_content_g + self.lamda * loss_noise_g
                 loss_g = loss_gan_g + self.fai * loss_l1
+                
+                if hasattr(self, 'texture_loss_weight'):
+                    loss_g += self.feat_extractor.texture_loss(pred_fusion, target) * self.texture_loss_weight
+                if hasattr(self, 'perceptual_loss_weight'):
+                    loss_g += self.feat_extractor.perceptual_loss(pred_fusion, target) * self.perceptual_loss_weight
+                
                 self.opt_g.zero_grad()
                 loss_g.backward()
                 self.opt_g.step()
@@ -397,13 +463,14 @@ class Solver(object):
                 x = x.unsqueeze(1).float().to(self.device)
                 y = y.unsqueeze(1).float().to(self.device)
 
-                pred = self.generator(x)['pred_fusion']
+                pred_content, pred_noise, pred = self.generator(x)['pred_fusion']
+                # x = self.trunc(self.denormalize_(x.cpu().detach()))
+                # y = self.trunc(self.denormalize_(y.cpu().detach()))
+                
+                # for fusion visualization
                 x = self.trunc(self.denormalize_(x.cpu().detach()))
-                y = self.trunc(self.denormalize_(y.cpu().detach()))
-                pred = self.trunc(self.denormalize_(pred.cpu().detach()))
-                # x = self.trunc(x.cpu().detach())
-                # y = self.trunc(y.cpu().detach())
-                # pred = self.trunc(pred.cpu().detach())
+                y = self.trunc(self.denormalize_((y - pred).cpu().detach()))
+                pred = self.trunc(self.denormalize_((y - (x - pred_noise)).cpu().detach()))
 
                 data_range = self.trunc_max - self.trunc_min
 
@@ -452,18 +519,21 @@ class Solver(object):
 
                 shape_ = x.shape[-1]
                 # sync with training
-                
+
                 x = x.unsqueeze(1).float().to(self.device)
                 y = y.unsqueeze(1).float().to(self.device)
 
-                pred = self.generator(x)['pred_fusion']
-                x = self.trunc(self.denormalize_(x.view(shape_, shape_).cpu().detach()))
-                y = self.trunc(self.denormalize_(y.view(shape_, shape_).cpu().detach()))
-                pred = self.trunc(self.denormalize_(pred.view(shape_, shape_).cpu().detach()))
+                out= self.generator(x)
+                pred_content, pred_noise, pred  = out['pred_content'], out['pred_noise'], out['pred_fusion']
 
-                np.save(os.path.join(self.save_path, 'x', '{}_result'.format(i)), x)
-                np.save(os.path.join(self.save_path, 'y', '{}_result'.format(i)), y)
-                np.save(os.path.join(self.save_path, 'pred', '{}_result'.format(i)), pred)
+                # for fusion visualization
+                y_pred = self.trunc(self.denormalize_((pred_content).view(shape_, shape_).cpu().detach()))
+                y_noise = self.trunc(self.denormalize_((y - (x - pred_noise)).view(shape_, shape_).cpu().detach()))
+                y_fusion = self.trunc(self.denormalize_((y - pred).view(shape_, shape_).cpu().detach()))
+
+                # x = self.trunc(self.denormalize_(x.view(shape_, shape_).cpu().detach()))
+                # y = self.trunc(self.denormalize_(y.view(shape_, shape_).cpu().detach()))
+                # pred = self.trunc(self.denormalize_(pred.view(shape_, shape_).cpu().detach()))
 
                 data_range = self.trunc_max - self.trunc_min
 
@@ -483,7 +553,8 @@ class Solver(object):
 
                 # save result figure
                 if self.result_fig:
-                    self.save_fig(x, y, pred, i, original_result, pred_result)
+                    # self.save_fig(x, y, pred, i, original_result, pred_result)
+                    self.save_fig(y_pred, y_noise, y_fusion, i, original_result, pred_result)
 
             logger.debug('Original\tPSNR avg: {:.4f} , SSIM avg: {:.4f} , RMSE avg: {:.4f}'.format(
                 ori_psnr_avg / len(self.test_data_loader), ori_ssim_avg / len(self.test_data_loader),
@@ -556,17 +627,13 @@ class Solver(object):
             self.model.eval()
         elif self.model_name.startswith('cncl_unet'):
             self.generator = CNCL(
-                content_encoder_mode=self.conf.content_mode, 
-                mode=self.conf.cncl_mode
+                noise_encoder=self.conf.noise_mode, 
+                content_encoder=self.conf.content_mode, 
+                attn_mode=self.conf.attn_mode,
+                norm_mode=self.conf.norm_mode,
+                act_mode=self.conf.act_mode
                 )
-            # import ipdb
-            # ipdb.set_trace()
-            if self.model_name[-4:] == 'base':
-                self.load_model(self.generator, self.test_iters, 'cncl_unet_base_generator')
-            elif self.model_name[-3:] == 'sca':
-                self.load_model(self.generator, self.test_iters, 'cncl_unet_sca_generator')
-            elif self.model_name[-2:] == 'ca':
-                self.load_model(self.generator, self.test_iters, 'cncl_unet_ca_generator')
+            self.load_model(self.generator, self.test_iters, self.model_name + '_generator') # hack: append '_generator'
             self.generator.eval()
             self.test_cncl()
             return 
@@ -595,9 +662,9 @@ class Solver(object):
                 y = self.trunc(self.denormalize_(y.view(shape_, shape_).cpu().detach()))
                 pred = self.trunc(self.denormalize_(pred.view(shape_, shape_).cpu().detach()))
 
-                np.save(os.path.join(self.save_path, 'x', '{}_result'.format(i)), x)
-                np.save(os.path.join(self.save_path, 'y', '{}_result'.format(i)), y)
-                np.save(os.path.join(self.save_path, 'pred', '{}_result'.format(i)), pred)
+                # np.save(os.path.join(self.save_path, 'x', '{}_result'.format(i)), x)
+                # np.save(os.path.join(self.save_path, 'y', '{}_result'.format(i)), y)
+                # np.save(os.path.join(self.save_path, 'pred', '{}_result'.format(i)), pred)
                 data_range = self.trunc_max - self.trunc_min
 
                 original_result, pred_result = compute_measure(x, y, pred, data_range)
