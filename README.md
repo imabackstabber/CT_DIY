@@ -80,3 +80,17 @@ but seriously, you need to change the **fusion model.**
 4. fusion layer，去掉1$\times$1的conv，改用transformer based methods（
    1. crossattn
    2. restormer
+
+12.16 
+
+今天写代码的时候才发现改fusion的思路不太对，因为fusion拿到的始终只有1 channel的噪声图和1 channel的内容图
+
+所以fusion层也只能写成SimpleFusion了（悲
+
+也正因为这样，我们可以挑选出noise的特征图和content的特征图，对**特征图**进行fusion，然后预测
+
+在这里我们就可以讲故事：因为cncl_baseline的双分支其实始终是独立的，只有在最后simpleFusion处进行交互
+
+所以我们要让他们提前的，或者更激进的是在整个推理过程中进行交互（motivation合理性得证desu）
+
+所以就可以加上CrossAttn了
