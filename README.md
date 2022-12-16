@@ -62,11 +62,11 @@ but seriously, you need to change the **fusion model.**
 
 如果texture loss设置成为0.1那么就还好：
 
-<img src="D:\git_repo\CT_DIY\asset\image-20221215201756948.png" alt="image-20221215201756948" style="zoom:50%;" />
+<img src="./asset/image-20221215201756948.png" alt="image-20221215201756948" style="zoom:50%;" />
 
 如果texture loss设置成为1那么content分支崩掉：
 
-<img src="D:\git_repo\CT_DIY\asset\image-20221215201817180.png" alt="image-20221215201817180" style="zoom:50%;" />
+<img src="./asset/image-20221215201817180.png" alt="image-20221215201817180" style="zoom:50%;" />
 
 但是就psnr结果来说好像texture loss为1的时候反而更好，可能是噪声分支学习的已经很好了，fusion层一蹴而就
 
