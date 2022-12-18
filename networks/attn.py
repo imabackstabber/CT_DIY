@@ -171,8 +171,8 @@ class MDTABlock(nn.Module):
 
     def forward(self, x):
         # pre-norm and skip connection
-        x = self.mdta(self.norm(x))
-        return out
+        x = x + self.mdta(self.norm(x))
+        return x
 
 # To see the layout of CrossAttn, refer to https://medium.com/@geetkal67/attention-networks-a-simple-way-to-understand-cross-attention-3b396266d82e
 class CrossAttention(nn.Module):
@@ -235,8 +235,8 @@ class CrossAttentionBlock(nn.Module):
 
     def forward(self, x):
         # pre-norm and skip connection
-        x = self.attn(self.norm(x))
-        return out
+        x = x + self.attn(self.norm(x))
+        return x
 
 if __name__ == '__main__':
     attn = MDTA()
