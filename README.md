@@ -94,3 +94,20 @@ but seriously, you need to change the **fusion model.**
 所以我们要让他们提前的，或者更激进的是在整个推理过程中进行交互（motivation合理性得证desu）
 
 所以就可以加上CrossAttn了
+
+12.18
+
+调出来结果暂时是这样的：
+
+| | cncl_unet + ca| cncl_attn + ca + mdta/1 + cross/1| cncl_attn + mdta/1 + cross/1|
+|---|---|---|---|
+|PSNR | 44.3775| 40.7043| 43.9977|
+|SSIM | 0.9673| 0.9277 | 0.9630|
+
+这批结果里面最有意思的应该是 ca + mdta/1 + cross/1 这个，参数量最多但是啥也不是
+
+回看一下代码，代码里面其实存在不少问题，比如写的这个注意力就没有跳层连接，也没有和跳层连接配套的layernorm
+
+这可能解释了为什么CA + MDTA + cross 的架构反而最差，估计方差都爆炸了
+
+不知道改了之后会不会有性能收益

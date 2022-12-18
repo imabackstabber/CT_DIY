@@ -542,13 +542,13 @@ class Solver(object):
                 pred_content, pred_noise, pred  = out['pred_content'], out['pred_noise'], out['pred_fusion']
 
                 # for fusion visualization
-                y_pred = self.trunc(self.denormalize_((pred_content).view(shape_, shape_).cpu().detach()))
-                y_noise = self.trunc(self.denormalize_((y - (x - pred_noise)).view(shape_, shape_).cpu().detach()))
-                y_fusion = self.trunc(self.denormalize_((y - pred).view(shape_, shape_).cpu().detach()))
+                # y_pred = self.trunc(self.denormalize_((pred_content).view(shape_, shape_).cpu().detach()))
+                # y_noise = self.trunc(self.denormalize_((y - (x - pred_noise)).view(shape_, shape_).cpu().detach()))
+                # y_fusion = self.trunc(self.denormalize_((y - pred).view(shape_, shape_).cpu().detach()))
 
-                # x = self.trunc(self.denormalize_(x.view(shape_, shape_).cpu().detach()))
-                # y = self.trunc(self.denormalize_(y.view(shape_, shape_).cpu().detach()))
-                # pred = self.trunc(self.denormalize_(pred.view(shape_, shape_).cpu().detach()))
+                x = self.trunc(self.denormalize_(x.view(shape_, shape_).cpu().detach()))
+                y = self.trunc(self.denormalize_(y.view(shape_, shape_).cpu().detach()))
+                pred = self.trunc(self.denormalize_(pred.view(shape_, shape_).cpu().detach()))
 
                 data_range = self.trunc_max - self.trunc_min
 
@@ -568,8 +568,8 @@ class Solver(object):
 
                 # save result figure
                 if self.result_fig:
-                    # self.save_fig(x, y, pred, i, original_result, pred_result)
-                    self.save_fig(y_pred, y_noise, y_fusion, i, original_result, pred_result)
+                    self.save_fig(x, y, pred, i, original_result, pred_result)
+                    # self.save_fig(y_pred, y_noise, y_fusion, i, original_result, pred_result)
 
             logger.debug('Original\tPSNR avg: {:.4f} , SSIM avg: {:.4f} , RMSE avg: {:.4f}'.format(
                 ori_psnr_avg / len(self.test_data_loader), ori_ssim_avg / len(self.test_data_loader),
@@ -652,6 +652,20 @@ class Solver(object):
             self.generator.eval()
             self.test_cncl()
             return 
+        elif self.model_name.startswith('cncl_attn'):
+            self.generator = CNCL_attn(
+                noise_encoder=self.conf.noise_mode, 
+                content_encoder=self.conf.content_mode, 
+                attn_mode=self.conf.attn_mode,
+                norm_mode=self.conf.norm_mode,
+                act_mode=self.conf.act_mode,
+                mdta_layer_num = self.conf.mdta_num,
+                cross_layer_num = self.conf.cross_num
+            )
+            self.load_model(self.generator, self.test_iters, self.model_name + '_generator') # hack: append '_generator'
+            self.generator.eval()
+            self.test_cncl()
+            return
         else:
             logger.exception('Architecture {} Not Implemented.'.format(self.model_name))
             raise NotImplementedError('Architecture {} Not Implemented.'.format(self.model_name))
