@@ -12,3 +12,4 @@ save/
 
 # ignore script
 *.bat
+*.sh
