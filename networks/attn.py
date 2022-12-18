@@ -231,12 +231,13 @@ class CrossAttentionBlock(nn.Module):
         super().__init__()
         
         self.attn = CrossAttention(dim=dim, num_heads = num_heads, bias = bias)
-        self.norm = LayerNorm2d(dim)
+        self.norm_x = LayerNorm2d(dim)
+        self.norm_ctx = LayerNorm2d(dim)
 
-    def forward(self, x):
+    def forward(self, x, ctx):
         # pre-norm and skip connection
-        x = x + self.attn(self.norm(x))
-        return x
+        out_x , out_ctx = self.attn(self.norm_x(x), self.norm_ctx(ctx))
+        return out_x + x, out_ctx + ctx
 
 if __name__ == '__main__':
     attn = MDTA()
