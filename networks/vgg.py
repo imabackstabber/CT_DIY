@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torchvision.models import vgg16, vgg19, VGG19_Weights
+from torchvision.models import vgg16, vgg19
 from misc import gram_matrix
 
 class feat_extractor(nn.Module):

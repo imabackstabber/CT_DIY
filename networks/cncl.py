@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from networks.backbone import RED_SK_Block, LayerNorm2d
-from networks.attn import MDTA,CrossAttention
+from networks.attn import MDTA, CrossAttention, MDTABlock, CrossAttentionBlock
 
 class SCAM(nn.Module):
     '''
@@ -388,9 +388,14 @@ class CNCL_attn(nn.Module):
         if content_encoder == 'unet':
             self.content_encoder = UNet(attn_mode = attn_mode, norm=norm_mode, act=act_mode)
 
-        self.noise_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
-        self.content_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
-        self.cross_attn = nn.ModuleList([CrossAttention(dim=64) for _ in range(cross_layer_num)])
+        # self.noise_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
+        # self.content_attn = nn.ModuleList([MDTA(dim=64) for _ in range(mdta_layer_num)])
+        # self.cross_attn = nn.ModuleList([CrossAttention(dim=64) for _ in range(cross_layer_num)])
+
+        # use ln and residual
+        self.noise_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
+        self.content_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
+        self.cross_attn = nn.ModuleList([CrossAttentionBlock(dim=64) for _ in range(cross_layer_num)])
 
         self.noise_pred = OutConv(64, 1)
         self.content_pred = OutConv(64,1)

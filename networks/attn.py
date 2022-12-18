@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from einops import rearrange
 from torch import einsum
+from networks.backbone import LayerNorm2d
 
 def exists(val):
     return val is not None
@@ -161,6 +162,18 @@ class MDTA(nn.Module):
         out = self.project_out(out)
         return out
 
+class MDTABlock(nn.Module):
+    def __init__(self, dim = 64, num_heads = 4, bias = False):
+        super(MDTABlock, self).__init__()
+        
+        self.mdta = MDTA(dim = dim, num_heads = num_heads, bias = bias)
+        self.norm = LayerNorm2d(dim)
+
+    def forward(self, x):
+        # pre-norm and skip connection
+        x = self.mdta(self.norm(x))
+        return out
+
 # To see the layout of CrossAttn, refer to https://medium.com/@geetkal67/attention-networks-a-simple-way-to-understand-cross-attention-3b396266d82e
 class CrossAttention(nn.Module):
     def __init__(self ,dim = 64, num_heads = 4, bias = False) -> None:
@@ -212,6 +225,18 @@ class CrossAttention(nn.Module):
         x_out = self.x_project_out(x_out)
 
         return x_out, ctx_out
+
+class CrossAttentionBlock(nn.Module):
+    def __init__(self, dim = 64, num_heads = 4, bias = False):
+        super().__init__()
+        
+        self.attn = CrossAttention(dim=dim, num_heads = num_heads, bias = bias)
+        self.norm = LayerNorm2d(dim)
+
+    def forward(self, x):
+        # pre-norm and skip connection
+        x = self.attn(self.norm(x))
+        return out
 
 if __name__ == '__main__':
     attn = MDTA()
