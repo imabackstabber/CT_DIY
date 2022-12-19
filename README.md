@@ -111,3 +111,11 @@ but seriously, you need to change the **fusion model.**
 这可能解释了为什么CA + MDTA + cross 的架构反而最差，估计方差都爆炸了
 
 不知道改了之后会不会有性能收益
+
+12.19
+
+attn 还是有几个可能的bug
+
+1. 没有除以hidden_dim
+
+2. 由于噪声和网络和内容网络关注的其实是完全相反的区域，所以其实注意力应该取补？
