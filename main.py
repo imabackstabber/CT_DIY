@@ -14,6 +14,12 @@ torch.cuda._initialized = True
 #解决WIN10无法训练的问题
 
 # torch.backends.cudnn.enabled = False
+# torch.backends.cudnn.deterministic = True
+
+seed = 3407
+torch.manual_seed(seed)            # 为CPU设置随机种子
+torch.cuda.manual_seed(seed)       # 为当前GPU设置随机种子
+torch.cuda.manual_seed_all(seed)   # 为所有GPU设置随机种子
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 # # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 

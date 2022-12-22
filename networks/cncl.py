@@ -393,9 +393,9 @@ class CNCL_attn(nn.Module):
         # self.cross_attn = nn.ModuleList([CrossAttention(dim=64) for _ in range(cross_layer_num)])
 
         # use ln and residual
-        self.noise_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
-        self.content_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
-        self.cross_attn = nn.ModuleList([CrossAttentionBlock(dim=64) for _ in range(cross_layer_num)])
+        # self.noise_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
+        # self.content_attn = nn.ModuleList([MDTABlock(dim=64) for _ in range(mdta_layer_num)])
+        self.cross_attn = nn.ModuleList([CrossAttention(dim=64) for _ in range(cross_layer_num)])
 
         self.noise_pred = OutConv(64, 1)
         self.content_pred = OutConv(64,1)
@@ -407,11 +407,11 @@ class CNCL_attn(nn.Module):
         _, noise_featmap = self.noise_encoder(img)
         _, content_featmap = self.content_encoder(img)
 
-        for layer in self.noise_attn:
-            noise_featmap = layer(noise_featmap)
+        # for layer in self.noise_attn:
+        #     noise_featmap = layer(noise_featmap)
         
-        for layer in self.content_attn:
-            content_featmap = layer(content_featmap)
+        # for layer in self.content_attn:
+        #     content_featmap = layer(content_featmap)
 
         for layer in self.cross_attn:
             noise_featmap, content_featmap = layer(noise_featmap, content_featmap)
@@ -419,6 +419,118 @@ class CNCL_attn(nn.Module):
         pred_noise = self.noise_pred(noise_featmap)
         pred_content = self.content_pred(content_featmap)
 
+        pred_fusion = self.fusion_layer(pred_noise, img, pred_content)
+
+        return {
+            'pred_noise': pred_noise,
+            'pred_content': pred_content,
+            'pred_fusion': pred_fusion
+        }
+
+class DualUNet(nn.Module):
+    def __init__(self, in_channels = 1, out_channels = 1, bilinear=True, 
+                norm = 'bn' , act = 'relu', attn_mode = 'base', 
+                cross_layer_num = 1):
+        super(DualUNet, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.bilinear = bilinear
+
+        self.content_inc = DoubleConv(in_channels, 64, norm = norm, act = act)
+        self.noise_inc = DoubleConv(in_channels, 64, norm = norm, act = act)
+        
+        self.content_down1 = Down(64, 128, norm = norm, act = act)
+        self.content_down2 = Down(128, 256, norm = norm, act = act)
+        self.content_down3 = Down(256, 512, norm = norm, act = act)
+        self.noise_down1 = Down(64, 128, norm = norm, act = act)
+        self.noise_down2 = Down(128, 256, norm = norm, act = act)
+        self.noise_down3 = Down(256, 512, norm = norm, act = act)
+
+        factor = 2 if bilinear else 1
+
+        self.content_down4 = Down(512, 1024 // factor, norm = norm, act = act)
+        self.noise_down4 = Down(512, 1024 // factor, norm = norm, act = act)
+
+        self.content_up1 = Up(1024, 512 // factor, bilinear, norm = norm, act = act)
+        self.content_up2 = Up(512, 256 // factor, bilinear, norm = norm, act = act)
+        self.content_up3 = Up(256, 128 // factor, bilinear, norm = norm, act = act)
+        self.content_up4 = Up(128, 64, bilinear, norm = norm, act = act)
+
+        self.noise_up1 = Up(1024, 512 // factor, bilinear, norm = norm, act = act)
+        self.noise_up2 = Up(512, 256 // factor, bilinear, norm = norm, act = act)
+        self.noise_up3 = Up(256, 128 // factor, bilinear, norm = norm, act = act)
+        self.noise_up4 = Up(128, 64, bilinear, norm = norm, act = act)
+
+        self.cross_attn1 = nn.ModuleList([CrossAttentionBlock(dim=512 // factor) for _ in range(cross_layer_num)])
+        self.cross_attn2 = nn.ModuleList([CrossAttentionBlock(dim=256 // factor) for _ in range(cross_layer_num)])
+        self.cross_attn3 = nn.ModuleList([CrossAttentionBlock(dim=128 // factor) for _ in range(cross_layer_num)])
+        self.cross_attn4 = nn.ModuleList([CrossAttentionBlock(dim=64) for _ in range(cross_layer_num)])
+
+        self.content_outc = OutConv(64, out_channels)
+        self.noise_outc = OutConv(64, out_channels)
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
+
+    def forward(self, x):
+        # x: [bs * patch_n, 1, *patch_size]
+
+        content_x1 = self.content_inc(x) # [bs * patch_n, 64, *patch_size]
+        content_x2 = self.content_down1(content_x1) # [bs * patch_n, 128, *patch_size // 2]
+        content_x3 = self.content_down2(content_x2) # [bs * patch_n, 256, *patch_size // 4]
+        content_x4 = self.content_down3(content_x3) # [bs * patch_n, 512, *patch_size // 8]
+        content_x5 = self.content_down4(content_x4) # [bs * patch_n, 512, *patch_size // 16] if bilinear
+
+        noise_x1 = self.noise_inc(x) # [bs * patch_n, 64, *patch_size]
+        noise_x2 = self.noise_down1(noise_x1) # [bs * patch_n, 128, *patch_size // 2]
+        noise_x3 = self.noise_down2(noise_x2) # [bs * patch_n, 256, *patch_size // 4]
+        noise_x4 = self.noise_down3(noise_x3) # [bs * patch_n, 512, *patch_size // 8]
+        noise_x5 = self.noise_down4(noise_x4) # [bs * patch_n, 512, *patch_size // 16] if bilinear
+
+        # cross-attn 1
+        content_x = self.content_up1(content_x5, content_x4) # [bs * patch_n, 256, *patch_size // 8]
+        noise_x = self.noise_up1(noise_x5, noise_x4) # [bs * patch_n, 256, *patch_size // 8]
+        for layer in self.cross_attn1:
+            content_x, noise_x = layer(content_x, noise_x)
+
+        # cross-attn 2
+        content_x = self.content_up2(content_x, content_x3) # [bs * patch_n, 128, *patch_size // 4]
+        noise_x = self.noise_up2(noise_x, noise_x3) # [bs * patch_n, 128, *patch_size // 4]
+        for layer in self.cross_attn2:
+            content_x, noise_x = layer(content_x, noise_x)
+
+        # cross-attn 3
+        content_x = self.content_up3(content_x, content_x2) # [bs * patch_n, 256, *patch_size // 2]
+        noise_x = self.noise_up3(noise_x, noise_x2) # [bs * patch_n, 256, *patch_size // 2]
+        for layer in self.cross_attn3:
+            content_x, noise_x = layer(content_x, noise_x)
+
+        # cross-attn 4
+        content_x = self.content_up4(content_x, content_x1) # [bs * patch_n, 64, *patch_size]
+        noise_x = self.noise_up4(noise_x, noise_x1) # [bs * patch_n, 64, *patch_size]
+        for layer in self.cross_attn4:
+            content_x, noise_x = layer(content_x, noise_x)
+
+        content_out = self.content_outc(content_x) # [bs * patch_n, 1, *patch_size]
+        noise_out = self.noise_outc(noise_x) # [bs * patch_n, 1, *patch_size]
+
+        return content_out, noise_out # please return the final featmap
+
+class CNCL_full_attn(nn.Module):
+    def __init__(self, attn_mode = 'base', norm_mode = 'bn', act_mode = 'relu',
+                cross_layer_num = 1, 
+                pre_fusion = None, fusion = 'simple') -> None:
+        super().__init__()
+        self.encoder = DualUNet(norm = norm_mode , act = act_mode,
+                                attn_mode = attn_mode, cross_layer_num = cross_layer_num)
+        self.fusion_layer = SimpleFusion(pre_fusion=pre_fusion)
+
+    def forward(self, img):
+        pred_content, pred_noise = self.encoder(img)
         pred_fusion = self.fusion_layer(pred_noise, img, pred_content)
 
         return {
