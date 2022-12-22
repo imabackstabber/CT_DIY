@@ -119,3 +119,34 @@ attn 还是有几个可能的bug
 1. 没有除以hidden_dim
 
 2. 由于噪声和网络和内容网络关注的其实是完全相反的区域，所以其实注意力应该取补？
+
+12.22
+
+更新一波各个架构上面最好的psnr
+
+| | original| cncl_attn + ln + relu + mdta/0 + cross/1| cncl_attn + bn + relu + mdta/0 + cross/1 | cncl_attn + ln + gelu + mdta/0 + cross/1| cncl_attn + bn + gelu + mdta/0 + cross/1|
+|---|---|---|---|---|---|
+|PSNR | 39.5416| 44.2475| 43.0232| 44.6064| 41.6818|
+|SSIM | 0.9130 | 0.9655| 0.9558| 0.9683| 0.9364|
+|RMSE | 43.9620| 25.3842| 29.1170| 24.4256| 33.9374|
+
+上面的数据表明attn需要与ln配合，这与现如今vision transformer架构里面常常使用ln而不是bn的de-facto standard不谋而合
+
+| | original| unet + ln + relu| unet + bn + gelu| unet + ln + gelu|
+|---|---|---|---|---|
+|PSNR | 39.5416| 43.9920| 43.0232| 42.9565| 44.2839|
+|SSIM | 0.9130 | 0.9631| 0.9558| 0.9566| 0.9655|
+|RMSE | 43.9620| 26.1304| 29.1170| 29.3132| 25.3113|
+
+上面的数据表明ln + gelu是真的很强。
+
+但是上面的数据也有我感觉解释不了的地方，比如为啥bn + gelu + attn < bn + gelu
+
+写作的时候可以写:
+
+original->unet->unet+ln->unet+ln+gelu->unet+ln+gelu+attn
+
+总之避开不合理的实验数据吧，毕竟实验也有随机性的
+
+另外，要说的是``seed = 3407``真的挺好用的，至少在这个实验中表现是这样的。
+
